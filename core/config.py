@@ -25,12 +25,16 @@ class Settings:
     groq_api_key: str = field(default_factory=lambda: _env("GROQ_API_KEY"))
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_model: str = field(default_factory=lambda: _env(
-        "OPENROUTER_MODEL", "deepseek/deepseek-chat-v3-0324:free"
+        "OPENROUTER_MODEL", "nvidia/nemotron-3.5-lightning:free"
     ))
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    groq_model: str = field(default_factory=lambda: _env("GROQ_MODEL", "openai/gpt-oss-120b"))
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+    gemini_model: str = field(default_factory=lambda: _env("GEMINI_MODEL", "gemini-3.8-flash"))
     max_repair_retries: int = 2
     max_files_analyzed: int = 80
     max_file_size: int = 80_000
-    request_timeout: int = 90
+    request_timeout: int = 45
     ignore_dirs: list = field(
         default_factory=lambda: [
             ".git", ".hg", ".svn", "__pycache__", ".venv", "venv", "env",

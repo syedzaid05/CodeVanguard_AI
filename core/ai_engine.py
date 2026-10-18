@@ -10,37 +10,69 @@ class AIEngine:
         self.api_key = settings.openrouter_api_key
         self.base_url = settings.openrouter_base_url
         self.model = settings.openrouter_model
+        self.fallbacks = []
+        if settings.groq_api_key:
+            self.fallbacks.append(("Groq", settings.groq_base_url, settings.groq_model, settings.groq_api_key))
+        if settings.gemini_api_key:
+            self.fallbacks.append(("Gemini", settings.gemini_base_url, settings.gemini_model, settings.gemini_api_key))
 
     @property
     def enabled(self) -> bool:
-        return bool(self.api_key)
+        return bool(self.api_key) or bool(self.fallbacks)
 
-    def chat(self, system: str, user: str, temperature: float = 0.1) -> str:
+    def chat(self, system: str, user: str, temperature: float = 0.1, max_tokens: int = 1400) -> str:
         if not self.enabled:
-            raise RuntimeError("OPENROUTER_API_KEY is not set. Add it to .env.")
-        resp = requests.post(
-            f"{self.base_url}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
+            raise RuntimeError("No API key set. Add OPENROUTER_API_KEY, GROQ_API_KEY or GOOGLE_GEMINI_API_KEY to .env.")
+        openrouter = [("OpenRouter", self.base_url, self.model, self.api_key)] if self.api_key else []
+        # Fast providers first: Groq/Gemini typically respond in seconds,
+        # OpenRouter free models can take minutes.
+        providers = list(self.fallbacks) + openrouter
+        errors = []
+        for name, base_url, model, api_key in providers:
+            try:
+                return self._post(base_url, model, api_key, system, user, temperature, max_tokens)
+            except (requests.RequestException, KeyError, IndexError, ValueError) as e:
+                errors.append(f"{name}: {e}")
+        raise RuntimeError("All providers failed -> " + " | ".join(errors))
+
+    def _post(self, base_url: str, model: str, api_key: str, system: str, user: str, temperature: float, max_tokens: int = 1400) -> str:
+        if base_url == settings.gemini_base_url:
+            url = f"{base_url}/models/{model}:generateContent"
+            headers = {"x-goog-api-key": api_key}
+            payload = {
+                "systemInstruction": {"parts": [{"text": system}]},
+                "contents": [{"role": "user", "parts": [{"text": user}]}],
+                "generationConfig": {"temperature": temperature, "maxOutputTokens": max_tokens},
+            }
+        else:
+            url = f"{base_url}/chat/completions"
+            headers = {
+                "Authorization": f"Bearer {api_key}",
                 "HTTP-Referer": os.getenv("APP_URL", "http://localhost"),
                 "X-Title": "AI Code Repair Agent",
-            },
-            json={
-                "model": self.model,
+            }
+            payload = {
+                "model": model,
                 "temperature": temperature,
+                "max_tokens": max_tokens,
                 "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
                 ],
-            },
-            timeout=settings.request_timeout,
-        )
+            }
+        resp = requests.post(url, headers=headers, json=payload, timeout=settings.request_timeout)
         resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
+        data = resp.json()
+        if base_url == settings.gemini_base_url:
+            return data["candidates"][0]["content"]["parts"][0]["text"]
+        return data["choices"][0]["message"]["content"]
 
-    def explain_findings(self, findings, context_files) -> list:
+    def explain_findings(self, findings, context_files, progress_callback=None) -> list:
         out = []
-        for f in findings[:12]:
+        targets = findings[:10]
+        for i, f in enumerate(targets):
+            if progress_callback:
+                progress_callback(i + 1, len(targets), f)
             snippet = _find_snippet(context_files, f.file, f.line)
             user = (
                 f"Explain this static-analysis finding and how to fix it, in max 6 sentences.\n"
@@ -51,6 +83,8 @@ class AIEngine:
                 out.append({"finding": f, "explanation": self.chat(SYSTEM_PROMPT, user)})
             except (requests.RequestException, RuntimeError, KeyError, IndexError) as e:
                 out.append({"finding": f, "explanation": f"(AI explanation unavailable: {e})"})
+            if progress_callback:
+                progress_callback(-1, len(targets), f)  # -1 signals completion of this item
         return out
 
     def select_context_files(self, files, findings, limit: int = 6) -> list:

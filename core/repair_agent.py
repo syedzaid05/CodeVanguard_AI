@@ -28,10 +28,14 @@ class RepairResult:
 
 
 def generate_repair(ai: AIEngine, file_path, lines: list, findings) -> tuple[str | None, str | None]:
+    src = "".join(lines)
+    # Full-file rewrite: budget ~1 token per 3.5 chars of source, well above
+    # the input size plus headroom, capped to keep latency reasonable.
+    max_tokens = int(min(max(1400, len(src) / 3.5 + 1200), 20000))
     issue_text = "\n".join(f"[{f.tool}/{f.severity}] line {f.line}: {f.message}" for f in findings)
-    user = f"File: {file_path.rel_path}\n\nIssues:\n{issue_text}\n\nFile content:\n```python\n{''.join(lines)}```"
+    user = f"File: {file_path.rel_path}\n\nIssues:\n{issue_text}\n\nFile content:\n```python\n{src}```"
     try:
-        reply = ai.chat(REPAIR_SYSTEM, user, temperature=0.0)
+        reply = ai.chat(REPAIR_SYSTEM, user, temperature=0.0, max_tokens=max_tokens)
     except Exception as e:
         return None, f"AI request failed: {e}"
     return _extract_code(reply), None

@@ -10,7 +10,10 @@ LANG_BY_EXT = {
     ".c": "C", ".h": "C", ".cpp": "C++", ".cs": "C#", ".sh": "Shell",
     ".md": "Markdown", ".yml": "YAML", ".yaml": "YAML", ".json": "JSON",
     ".toml": "TOML", ".html": "HTML", ".css": "CSS", ".sql": "SQL",
+    ".ipynb": "Jupyter Notebook",
 }
+
+CELL_MARKER = "# %% [cell {}]"
 
 TEXT_EXTS = set(LANG_BY_EXT) | {".txt", ".cfg", ".ini", ".env.example", ".lock", ".csv"}
 
@@ -21,6 +24,58 @@ class SourceFile:
     rel_path: str
     language: str
     size: int
+
+
+def notebook_cells(path: Path) -> list:
+    """Extract code-cell sources from a .ipynb. Returns list of source strings."""
+    try:
+        nb = json.loads(path.read_text(encoding="utf-8", errors="ignore"))
+    except (json.JSONDecodeError, OSError, ValueError):
+        return []
+    cells = []
+    for c in nb.get("cells", []):
+        if c.get("cell_type") == "code":
+            src = c.get("source", "")
+            cells.append("".join(src) if isinstance(src, list) else src)
+    return cells
+
+
+def build_mirror(cells: list) -> str:
+    """Text fed as a virtual .py file to analysis/repair, with cell markers."""
+    parts = []
+    for i, src in enumerate(cells):
+        parts.append(CELL_MARKER.format(i))
+        parts.append(src.rstrip())
+    return "\n".join(parts) + "\n"
+
+
+def parse_mirror(text: str, expected_count: int):
+    """Split a patched mirror file back into cell sources. None if markers lost."""
+    import re
+    idxs = list(re.finditer(r"^# %% \[cell (\d+)\]$", text, flags=re.M))
+    if len(idxs) != expected_count:
+        return None
+    cells = []
+    for j, m in enumerate(idxs):
+        start = m.end()
+        end = idxs[j + 1].start() if j + 1 < len(idxs) else len(text)
+        cells.append(text[start:end].strip("\n"))
+    return cells
+
+
+def apply_notebook_patch(path: Path, patched_text: str, original_cells: list) -> bool:
+    """Write repaired code cells back into the notebook JSON. True on success."""
+    cells = parse_mirror(patched_text, len(original_cells))
+    if cells is None:
+        return False
+    nb = json.loads(path.read_text(encoding="utf-8", errors="ignore"))
+    k = 0
+    for c in nb.get("cells", []):
+        if c.get("cell_type") == "code" and k < len(cells):
+            c["source"] = cells[k].splitlines(keepends=True) or []
+            k += 1
+    path.write_text(json.dumps(nb, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    return True
 
 
 @dataclass
@@ -42,6 +97,17 @@ def collect_files(root: Path) -> ProcessedRepo:
         ext = p.suffix.lower()
         if ext in settings.ignore_exts:
             result.skipped_count += 1
+            continue
+        if ext == ".ipynb":
+            cells = notebook_cells(p)
+            code_len = sum(len(c) for c in cells)
+            if not cells or code_len > settings.max_file_size:
+                result.skipped_count += 1
+                continue
+            rel = str(p.relative_to(root)).replace("\\", "/")
+            result.files.append(
+                SourceFile(path=p, rel_path=rel, language="Jupyter Notebook", size=code_len)
+            )
             continue
         if ext not in TEXT_EXTS:
             result.skipped_count += 1
