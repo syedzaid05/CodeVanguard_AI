@@ -1,0 +1,7 @@
+streamlit>=1.40
+requests>=2.32
+python-dotenv>=1.0
+ruff>=0.6
+bandit>=1.7
+pytest>=8.0
+pandas>=2.1
