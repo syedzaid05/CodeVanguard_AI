@@ -122,8 +122,10 @@ OPENROUTER_MODEL="nvidia/nemotron-3.5-lightning:free"
 ## Deploy to Streamlit Cloud
 
 1. Push to **public GitHub** — `.env` is gitignored, never commit keys.
-2. https://share.streamlit.io → **Create app** → main file path `app.py`.
-3. **App settings → Secrets**:
+2. https://share.streamlit.io → **Create app** → select repo/branch → main file path `app.py`.
+3. In the deploy dialog, expand **Advanced settings** and set **Python version to 3.11**
+   (3.12 also works; avoid 3.13+).
+4. **App settings → Secrets** (paste only the providers you have):
 
    ```toml
    GROQ_API_KEY = "gsk_..."
@@ -131,8 +133,12 @@ OPENROUTER_MODEL="nvidia/nemotron-3.5-lightning:free"
    GOOGLE_GEMINI_API_KEY = "AI..."
    ```
 
-4. Deploy — `core/config.py` reads `os.environ` first, then `st.secrets`; tooling runs
-   via `python -m ruff` / `python -m bandit` inside the same env, so Cloud works out of the box.
+5. Deploy — `core/config.py` reads `os.environ` first, then `st.secrets`; tooling runs
+   via `python -m ruff` / `python -m bandit` inside the same env, and `git` is
+   pre-installed on Cloud, so it works out of the box.
+
+Online after deploy: https://share.streamlit.io/app/<your-username>/<repo-name/main/app.py> — restart clicks in
+**Manage app** fix any cold-start hiccups.
 
 ## Notes
 
